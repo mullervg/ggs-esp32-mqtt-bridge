@@ -1,0 +1,33 @@
+# Local configuration / secrets
+.env
+*.env
+*.local
+esp32/config.h
+config.h
+
+# Logs and captures
+*.log
+*.pcap
+*.pcapng
+*_backup_*.json
+ggs_config_backup_*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Arduino build artifacts
+build/
+*.bin
+*.elf
+*.map
+*.hex
