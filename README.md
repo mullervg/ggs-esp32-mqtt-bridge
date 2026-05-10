@@ -1,23 +1,34 @@
+````md
 # GGS ESP32 MQTT Bridge
 
 An ESP32 BLE-to-MQTT bridge for a Spider Farmer / GGS controller, with Home Assistant MQTT Discovery support.
 
-The bridge reads controller state over BLE, publishes sensor/device state to MQTT, and controls the light, fan, and blower locally without using the vendor cloud.
+The bridge reads controller state over BLE, publishes sensor and device state to MQTT, and controls the light, fan, and blower locally without using the vendor cloud.
+
+The project is designed around reliable local-first control, robust BLE synchronization, and safe configuration updates compatible with different GGS firmware behaviors.
+
+---
 
 ## Features
 
 - BLE → MQTT bridge for the GGS controller
-- Local control, no cloud dependency
-- Home Assistant MQTT Discovery entities
+- Local control without vendor cloud dependency
+- Home Assistant MQTT Discovery support
 - Temperature, humidity, and VPD publishing
 - Light on/off and brightness control
 - Light manual/time-slot mode control
-- Light schedule settings: enabled, start hour, end hour, brightness
+- Light schedule configuration support
 - Fan on/off, gear, percentage, and oscillation control
 - Blower on/off and percentage control
 - Raw JSON and `AA AA` framed BLE message support
-- Full `configFile`-based control with post-write verification
+- Granular `setConfigField`-based updates
+- Reliable state synchronization between BLE, MQTT, and Home Assistant
+- Post-write verification and automatic state refresh
+- Watchdog recovery and reconnect handling
 - Retained MQTT command cleanup to avoid stale command replay
+- Reduced BLE traffic and lower risk of config corruption
+
+---
 
 ## Repository structure
 
@@ -32,11 +43,24 @@ ggs-esp32-mqtt-bridge/
 ├── docs/
 │   └── protocol.md
 ├── README.md
-├── .gitignore
-└── config.example.h
+└── .gitignore
 ```
 
-`config.example.h` is duplicated at the repository root and inside `esp32/` for convenience. For Arduino IDE usage, copy the one inside `esp32/` to `esp32/config.h`.
+The repository includes a safe placeholder configuration file:
+
+```text
+esp32/config.example.h
+```
+
+Copy it locally to:
+
+```text
+esp32/config.h
+```
+
+The local `config.h` file is ignored by Git and should never be committed because it contains credentials and device identifiers.
+
+---
 
 ## How it works
 
@@ -47,9 +71,30 @@ The controller exposes two BLE characteristics:
 | Notify | `0000ff01-0000-1000-8000-00805f9b34fb` |
 | Write | `0000ff02-0000-1000-8000-00805f9b34fb` |
 
-Small commands can be sent as raw JSON. Large messages use a binary `AA AA` frame format that chunks and reassembles JSON payloads.
+Small commands can be sent as raw JSON. Larger payloads use a binary `AA AA` frame format that chunks and reassembles JSON messages.
 
-The ESP32 firmware intentionally controls devices by reading the full `configFile`, modifying only the required fields, sending the full config back with `setConfigFile`, then verifying the result. This is more reliable than direct commands such as `setFan`, which may acknowledge but not apply correctly depending on firmware behavior.
+The firmware primarily uses granular `setConfigField` operations to update only the required configuration fields while preserving the remaining controller state.
+
+The bridge maintains a synchronized local state model derived from:
+
+- BLE notifications
+- `getDevSta` responses
+- configuration snapshots
+- MQTT command acknowledgements
+
+After configuration writes, the firmware verifies the applied device state before publishing updates to MQTT and Home Assistant.
+
+This architecture:
+
+- reduces BLE traffic
+- lowers the risk of configuration corruption
+- improves state consistency
+- avoids unnecessary full-config rewrites
+- improves compatibility across firmware variants
+
+Large configuration payloads may still use full `configFile` synchronization internally when required by specific firmware behaviors or recovery flows.
+
+---
 
 ## Setup
 
@@ -64,6 +109,8 @@ Install the following libraries in Arduino IDE or PlatformIO:
 
 Use an ESP32 board package compatible with the BLE classes used by the sketch.
 
+---
+
 ### 2. Create local config
 
 Copy the example config:
@@ -75,45 +122,79 @@ cp esp32/config.example.h esp32/config.h
 Edit `esp32/config.h`:
 
 ```cpp
+#pragma once
+
+/*
+  Copy this file to esp32/config.h before compiling the Arduino sketch.
+  Never commit esp32/config.h because it contains local credentials and device IDs.
+*/
+
+// Wi-Fi
 #define WIFI_SSID "YOUR_WIFI_SSID"
 #define WIFI_PASS "YOUR_WIFI_PASSWORD"
 
+// MQTT broker
 #define MQTT_HOST "YOUR_MQTT_HOST"
 #define MQTT_PORT 1883
 #define MQTT_USER "YOUR_MQTT_USER"
 #define MQTT_PASS "YOUR_MQTT_PASSWORD"
 
+// BLE target. Leave GGS_TARGET_MAC empty to match only by advertised name.
 #define GGS_TARGET_NAME "SF-GGS-CB"
 #define GGS_TARGET_MAC  "AA:BB:CC:DD:EE:FF"
 
+// Device identifiers captured from your controller/app.
+// Treat them as device-specific secrets and do not publish real values.
 #define GGS_PID   "YOUR_GGS_PID"
 #define GGS_UID   "YOUR_GGS_UID"
 #define GGS_PCODE 1004
+
+// MQTT namespace and Home Assistant discovery metadata.
+#define MQTT_TOPIC_BASE        "grow/GGS"
+#define HA_DISCOVERY_PREFIX    "homeassistant"
+#define HA_DEVICE_ID           "ggs_esp32_mqtt_bridge"
+#define HA_DEVICE_NAME         "Spider Farmer GGS"
+#define HA_DEVICE_MODEL        "SF-GGS-CB"
+#define HA_DEVICE_MANUFACTURER "Spider Farmer"
 ```
 
-Leave `GGS_TARGET_MAC` as the placeholder if you prefer matching by BLE name only.
+Leave `GGS_TARGET_MAC` empty or as the placeholder value if you prefer matching by BLE name only.
 
 Never commit `esp32/config.h`.
 
+---
+
 ### 3. Flash the ESP32
 
-Open `esp32/ggs_bridge.ino` in Arduino IDE, select your ESP32 board and serial port, then upload.
+Open:
+
+```text
+esp32/ggs_bridge.ino
+```
+
+in Arduino IDE, select your ESP32 board and serial port, then upload the firmware.
+
+---
 
 ### 4. MQTT / Home Assistant
 
-The default topic base is:
+The default MQTT topic base is:
 
 ```text
 grow/GGS
 ```
 
-The bridge subscribes to command topics and publishes state topics. It also publishes Home Assistant MQTT Discovery configs under:
+The bridge subscribes to MQTT command topics and publishes state topics.
+
+It also publishes Home Assistant MQTT Discovery configs under:
 
 ```text
 homeassistant/...
 ```
 
-After the first successful BLE bootstrap, entities should appear in Home Assistant automatically if MQTT Discovery is enabled.
+After the first successful BLE bootstrap, entities should appear automatically in Home Assistant if MQTT Discovery is enabled.
+
+---
 
 ## Python tools
 
@@ -121,9 +202,27 @@ Create a virtual environment and install dependencies:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+```
+
+Linux/macOS:
+
+```bash
+source .venv/bin/activate
+```
+
+Windows:
+
+```bash
+.venv\Scripts\activate
+```
+
+Install dependencies:
+
+```bash
 pip install bleak
 ```
+
+---
 
 ### Read device state
 
@@ -135,6 +234,8 @@ python python/test_ble.py \
   get-dev-sta
 ```
 
+---
+
 ### Read config file
 
 ```bash
@@ -145,7 +246,11 @@ python python/test_ble.py \
   get-config-file
 ```
 
-### Set a device through full configFile
+---
+
+### Set a device state
+
+Example: blower 40%
 
 ```bash
 python python/test_ble.py \
@@ -155,19 +260,32 @@ python python/test_ble.py \
   set --device blower --on --level 40
 ```
 
-For fan gear:
+Example: fan gear 5
 
 ```bash
-python python/test_ble.py --pid YOUR_GGS_PID --uid YOUR_GGS_UID set --device fan --on --level 5
+python python/test_ble.py \
+  --pid YOUR_GGS_PID \
+  --uid YOUR_GGS_UID \
+  set --device fan --on --level 5
 ```
 
-### Sniff notifications
+---
+
+### Sniff BLE notifications
 
 ```bash
 python python/sniff_protocol.py --target-name SF-GGS-CB --probe
 ```
 
-Avoid publishing logs containing real BLE MAC addresses, PID, UID, local IPs, or MQTT credentials.
+Avoid publishing logs containing:
+
+- real BLE MAC addresses
+- PID/UID values
+- MQTT credentials
+- local IP addresses
+- captured config snapshots
+
+---
 
 ## Security notes
 
@@ -178,28 +296,42 @@ Do not commit:
 - Wi-Fi SSID/password
 - MQTT host/user/password
 - local IP addresses
-- real BLE MAC addresses if you consider them sensitive
+- real BLE MAC addresses
 - real GGS PID/UID values
 - captured config backups
 - raw logs from your local setup
+- local `config.h` files
+
+---
 
 ## Limitations
 
 - The GGS protocol is not officially documented.
-- `setConfigFile` is safer than direct `setFan`/`setLight`/`setBlower`, but it still depends on firmware behavior.
-- The bridge preserves the full config file and refuses obviously partial configs, but unknown firmware variants may add fields that require additional validation.
+- The bridge primarily relies on `setConfigField` operations for safer and smaller updates, but some firmware versions may still require partial or full config synchronization flows depending on device behavior.
+- Unknown firmware variants may introduce additional fields requiring validation or compatibility handling.
 - BLE stability depends on ESP32 board quality, power supply, distance, and RF noise.
-- Home Assistant retained commands are cleared before subscription to avoid stale replay; this is intentional.
+- Home Assistant retained commands are intentionally cleared before subscription to avoid stale replay issues.
+
+---
 
 ## Future improvements
 
 - Add PlatformIO support
 - Add unit tests for the `AA AA` frame parser
-- Add a small CLI to decode saved BLE logs
+- Add a CLI to decode saved BLE logs
 - Add optional MQTT TLS support
 - Add a web configuration portal for Wi-Fi/MQTT/device IDs
 - Add structured JSON logs for easier debugging
+- Improve automatic recovery and BLE reconnection handling
+- Add optional OTA firmware updates
+
+---
 
 ## License
 
-Choose and add a license before publishing, for example MIT or Apache-2.0.
+Choose and add a license before publishing, for example:
+
+- MIT
+- Apache-2.0
+```
+````
