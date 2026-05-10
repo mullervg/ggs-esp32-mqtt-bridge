@@ -1,4 +1,3 @@
-````md
 # GGS ESP32 MQTT Bridge
 
 An ESP32 BLE-to-MQTT bridge for a Spider Farmer / GGS controller, with Home Assistant MQTT Discovery support.
@@ -333,5 +332,3 @@ Choose and add a license before publishing, for example:
 
 - MIT
 - Apache-2.0
-```
-````
